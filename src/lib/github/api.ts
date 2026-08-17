@@ -94,10 +94,7 @@ export async function processRepositoryDetails(repo: GitHubRepo): Promise<Projec
     // Ignore language API errors
   }
 
-  // 3. Inspect dependency files for tech detection & image files
-  const fileDetectedTechs: string[] = [];
-  const repoFiles: string[] = [];
-
+  // 3. Inspect dependency files for tech detection & image files concurrently
   const candidateFiles = [
     "package.json",
     "requirements.txt",
@@ -108,21 +105,33 @@ export async function processRepositoryDetails(repo: GitHubRepo): Promise<Projec
     "pom.xml",
   ];
 
-  for (const filename of candidateFiles) {
-    try {
-      const fileUrl = `https://raw.githubusercontent.com/${owner}/${repoName}/${defaultBranch}/${filename}`;
-      const res = await fetch(fileUrl, {
-        headers: getAuthHeaders(),
-        next: { revalidate: 1800 },
-      });
-      if (res.ok) {
-        const content = await res.text();
-        repoFiles.push(filename);
-        const techs = detectTechnologiesFromFile(filename, content);
-        fileDetectedTechs.push(...techs);
+  const fileResults = await Promise.all(
+    candidateFiles.map(async (filename) => {
+      try {
+        const fileUrl = `https://raw.githubusercontent.com/${owner}/${repoName}/${defaultBranch}/${filename}`;
+        const res = await fetch(fileUrl, {
+          headers: getAuthHeaders(),
+          next: { revalidate: 1800 },
+        });
+        if (res.ok) {
+          const content = await res.text();
+          return { filename, content };
+        }
+      } catch {
+        // File does not exist
       }
-    } catch {
-      // File does not exist, ignore
+      return null;
+    })
+  );
+
+  const fileDetectedTechs: string[] = [];
+  const repoFiles: string[] = [];
+
+  for (const item of fileResults) {
+    if (item) {
+      repoFiles.push(item.filename);
+      const techs = detectTechnologiesFromFile(item.filename, item.content);
+      fileDetectedTechs.push(...techs);
     }
   }
 
